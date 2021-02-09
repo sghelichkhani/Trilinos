@@ -74,7 +74,9 @@
 #include "MueLu_FactoryFactory.hpp"
 #include "MueLu_FilteredAFactory.hpp"
 #include "MueLu_GenericRFactory.hpp"
+#include "MueLu_InitialBlockNumberFactory.hpp"
 #include "MueLu_LineDetectionFactory.hpp"
+#include "MueLu_LocalOrdinalTransferFactory.hpp"
 #include "MueLu_MasterList.hpp"
 #ifdef HAVE_MUELU_KOKKOS_REFACTOR
 #include "MueLu_NotayAggregationFactory.hpp"
@@ -347,10 +349,17 @@ namespace MueLu {
     // This is not ideal, as we may have "repartition: enable" turned on by default
     // and not present in the list, but it is better than nothing.
     useCoordinates_ = false;
+    useBlockNumber_ = false;
     if (MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: drop scheme", std::string, "distance laplacian") ||
         MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: type",        std::string, "brick") ||
         MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: export visualization data", bool, true)) {
       useCoordinates_ = true;
+    } else if(MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: drop scheme", std::string, "block diagonal distance laplacian")) {
+      useCoordinates_ = true;
+      useBlockNumber_ = true;
+    } else if(MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: drop scheme", std::string, "block diagonal") || 
+              MUELU_TEST_PARAM_2LIST(paramList, paramList, "aggregation: drop scheme", std::string, "block diagonal classical")) {
+      useBlockNumber_ = true;
     } else if(paramList.isSublist("smoother: params")) {
       const auto smooParamList = paramList.sublist("smoother: params");
       if(smooParamList.isParameter("partitioner: type") &&
@@ -368,7 +377,14 @@ namespace MueLu {
               MUELU_TEST_PARAM_2LIST(levelList, paramList, "aggregation: type",        std::string, "brick") ||
               MUELU_TEST_PARAM_2LIST(levelList, paramList, "aggregation: export visualization data", bool, true)) {
             useCoordinates_ = true;
-            break;
+          }
+          else if (MUELU_TEST_PARAM_2LIST(levelList, paramList, "aggregation: drop scheme", std::string, "block diagonal distance laplacian")) {
+            useCoordinates_ = true;
+            useBlockNumber_ = true;
+          }
+          else if (MUELU_TEST_PARAM_2LIST(levelList, paramList, "aggregation: drop scheme", std::string, "block diagonal") || 
+                   MUELU_TEST_PARAM_2LIST(levelList, paramList, "aggregation: drop scheme", std::string, "block diagonal classical")) {
+            useBlockNumber_ = true;
           }
         }
       }
@@ -574,6 +590,9 @@ namespace MueLu {
     // == Smoothers ==
     UpdateFactoryManager_Smoothers(paramList, defaultList, manager, levelID, keeps);
 
+    // === BlockNumber ===
+    UpdateFactoryManager_BlockNumber(paramList, defaultList, manager, levelID, keeps);
+
     // === Aggregation ===
     UpdateFactoryManager_Aggregation_TentativeP(paramList, defaultList, manager, levelID, keeps);
 
@@ -624,6 +643,9 @@ namespace MueLu {
     // === RAP ===
     UpdateFactoryManager_RAP(paramList, defaultList, manager, levelID, keeps);
 
+    // == BlockNumber Transfer ==
+    UpdateFactoryManager_LocalOrdinalTransfer("BlockNumber",paramList,defaultList,manager,levelID,keeps);
+
     // === Coordinates ===
     UpdateFactoryManager_Coordinates(paramList, defaultList, manager, levelID, keeps);
 
@@ -649,6 +671,9 @@ namespace MueLu {
         keeps.push_back(keep_pair("R", manager.GetFactory("R").get()));
       keeps.push_back(keep_pair("A", manager.GetFactory("A").get()));
     }
+
+    std::cout<<"*** Factory Manager on level "<<levelID<<" ***"<<std::endl;
+    manager.Print();//CMS debug
   }
 
   // =====================================================================================================
@@ -963,7 +988,7 @@ namespace MueLu {
       dropFactory =   rcp(new MueLu::SmooVecCoalesceDropFactory<SC,LO,GO,NO>());
       ParameterList dropParams;
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: drop scheme",             std::string, dropParams);
-      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: block diagonal: interleaved blocksize", std::string, dropParams);
+      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: block diagonal: interleaved blocksize", int, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: number of random vectors", int, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: number of times to pre or post smooth", int, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: penalty parameters", Teuchos::Array<double>, dropParams);
@@ -974,6 +999,7 @@ namespace MueLu {
       ParameterList dropParams;
       dropParams.set("lightweight wrap", true);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: drop scheme",             std::string, dropParams);
+      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: block diagonal: interleaved blocksize", int, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: drop tol",                     double, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: Dirichlet threshold",          double, dropParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: distance laplacian algo", std::string, dropParams);
@@ -983,6 +1009,14 @@ namespace MueLu {
         MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "filtered matrix: reuse graph",      bool, dropParams);
         MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "filtered matrix: reuse eigenvalue", bool, dropParams);
       }
+      // Block number transfer
+      MUELU_SET_VAR_2LIST(paramList, defaultList, "aggregation: drop scheme", std::string, drop_scheme);
+      if(drop_scheme == "block diagonal" || drop_scheme == "block diagonal distance laplacian" || drop_scheme == "block diagonal classical") {
+        std::cout<<"CMS: Adding 'BlockNumber' to level "<<levelID<<" from "<<dropFactory->description()<<"["<<dropFactory->GetID()<<"]"<<std::endl;
+        manager.Print();
+        //        dropFactory->SetFactory("BlockNumber",manager.GetFactory("BlockNumber"));
+      }
+
       dropFactory->SetParameterList(dropParams);
     }
     manager.SetFactory("Graph", dropFactory);
@@ -1269,6 +1303,71 @@ namespace MueLu {
       }
     }
   }
+
+  // =====================================================================================================
+  // =================================  LocalOrdinalTransfer =============================================
+  // =====================================================================================================
+  template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
+  void ParameterListInterpreter<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
+  UpdateFactoryManager_LocalOrdinalTransfer(const std::string VarName, ParameterList& paramList, const ParameterList& /* defaultList */,
+                                            FactoryManager& manager, int levelID, std::vector<keep_pair>& /* keeps */) const
+  {    
+    if(levelID >= 1){
+      RCP<Factory> fact = rcp(new LocalOrdinalTransferFactory(VarName));
+      fact->SetFactory("Aggregates", manager.GetFactory("Aggregates"));
+      fact->SetFactory("CoarseMap",  manager.GetFactory("CoarseMap"));
+      fact->SetFactory(VarName, this->GetFactoryManager(levelID-1)->GetFactory(VarName));
+
+      manager.SetFactory(VarName, fact);
+
+      auto RAP = rcp_const_cast<RAPFactory>(rcp_dynamic_cast<const RAPFactory>(manager.GetFactory("A")));
+      if (!RAP.is_null()) {
+        RAP->AddTransferFactory(manager.GetFactory(VarName));
+      } else {
+        auto RAPs = rcp_const_cast<RAPShiftFactory>(rcp_dynamic_cast<const RAPShiftFactory>(manager.GetFactory("A")));
+        RAPs->AddTransferFactory(manager.GetFactory(VarName));
+      }
+      std::cout<<"*** LOT Factory Manager "<<levelID-1<<" ***"<<std::endl;
+      rcp_dynamic_cast<FactoryManager>(this->GetFactoryManager(levelID-1))->Print();
+      std::cout<<"*** LOT Factory Manager "<<levelID<<" ***"<<std::endl;
+      manager.Print();
+      
+      //      auto cfact = this->GetFactoryManager(levelID)->GetFactory(VarName);
+      
+      //      auto prevfact = this->GetFactoryManager(levelID-1)->GetFactory(VarName);
+      //      std::cout<<"CMS: Level "<<levelID<<": LocalOrdinalTransferFactory["<<fact->GetID()<<"]"<<" asking for "<<prevfact->description()<<"["<<prevfact->GetID()<<"]"<<std::endl;
+      
+
+      //fact->SetFactory(VarName, this->GetFactoryManager(levelID-1)->GetFactory(VarName));
+      
+      //      std::cout<<"*** LOT Factory Manager "<<levelID<<" ***"<<std::endl;
+      //      rcp_dynamic_cast<FactoryManager>(this->GetFactoryManager(levelID))->Print();           
+      //      manager.set("VarName
+    }
+  }
+
+
+ // =====================================================================================================
+  // =================================  LocalOrdinalTransfer =============================================
+  // =====================================================================================================
+  template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
+  void ParameterListInterpreter<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
+  UpdateFactoryManager_BlockNumber(ParameterList& paramList, const ParameterList& defaultList,
+                                   FactoryManager& manager, int levelID , std::vector<keep_pair>& keeps) const
+  {
+    if(levelID < 2) {
+      ParameterList myParams;
+      RCP<Factory> fact = rcp(new InitialBlockNumberFactory());      
+      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: block diagonal: interleaved blocksize", int, myParams);
+      fact->SetParameterList(myParams);
+
+      manager.SetFactory("BlockNumber",fact);
+    }
+   
+
+    
+  }
+
 
   // =====================================================================================================
   // =========================================== Restriction =============================================

@@ -73,6 +73,9 @@
 #include "MueLu_PreDropFunctionConstVal.hpp"
 #include "MueLu_Utilities.hpp"
 
+
+#include "MueLu_FactoryManager.hpp"//DEBUG
+
 #include <algorithm>
 #include <cstdlib>
 #include <string>
@@ -132,36 +135,44 @@ namespace MueLu {
     validParamList->set< RCP<const FactoryBase> >("A",                  Teuchos::null, "Generating factory of the matrix A");
     validParamList->set< RCP<const FactoryBase> >("UnAmalgamationInfo", Teuchos::null, "Generating factory for UnAmalgamationInfo");
     validParamList->set< RCP<const FactoryBase> >("Coordinates",        Teuchos::null, "Generating factory for Coordinates");
+    validParamList->set< RCP<const FactoryBase> >("BlockNumber",        Teuchos::null, "Generating factory for Coordinates");
 
     return validParamList;
   }
-
+    
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::CoalesceDropFactory() : predrop_(Teuchos::null) { }
-
+  
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::DeclareInput(Level &currentLevel) const {
     Input(currentLevel, "A");
     Input(currentLevel, "UnAmalgamationInfo");
-
+    
     const ParameterList& pL = GetParameterList();
     if (pL.get<bool>("lightweight wrap") == true) {
-      if (pL.get<std::string>("aggregation: drop scheme") == "distance laplacian")
-        Input(currentLevel, "Coordinates");
-
-    }
+      std::string algo = pL.get<std::string>("aggregation: drop scheme");
+      if (algo == "distance laplacian" || algo == "block diagonal distance laplacian") {
+        Input(currentLevel, "Coordinates");    
+      }
+      else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian" || algo == "block diagonal")  {
+        std::cout<<"CMS: "<<this->description()<<"["<<this->GetID()<<"] Asking for BlockNumber on level "<<currentLevel.GetLevelID()<<std::endl;
+        currentLevel.print(std::cout,Debug);
+        Input(currentLevel, "BlockNumber");
+      }
+    }     
+    
   }
-
+  
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Build(Level &currentLevel) const {
-
+    
     FactoryMonitor m(*this, "Build", currentLevel);
-
+    
     typedef Teuchos::ScalarTraits<SC> STS;
     typedef typename STS::magnitudeType real_type;
     typedef Xpetra::MultiVector<real_type,LO,GO,NO> RealValuedMultiVector;
     typedef Xpetra::MultiVectorFactory<real_type,LO,GO,NO> RealValuedMultiVectorFactory;
-
+    
     if (predrop_ != Teuchos::null)
       GetOStream(Parameters0) << predrop_->description();
 
@@ -173,14 +184,15 @@ namespace MueLu {
 
     GetOStream(Parameters0) << "lightweight wrap = " << doExperimentalWrap << std::endl;
     std::string algo = pL.get<std::string>("aggregation: drop scheme");
-
+    
     RCP<RealValuedMultiVector> Coords;
-
+    
+    GetOStream(Parameters0) << "CMS: drop scheme = "<<algo<<std::endl;
     if(algo == "distance laplacian" ) { 
       // Grab the coordinates for distance laplacian
       Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
     }
-    else if(algo == "block_diagonal") {
+    else if(algo == "block diagonal") {
       // Handle the "block diagonal" filtering and then leave
       RCP<Matrix> dummy;
       BlockDiagonalize(currentLevel,*A,false,dummy);
@@ -188,24 +200,29 @@ namespace MueLu {
     }
     else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian")  {
       // Handle the "block diagonal" filtering, and then continue onward
-      RCP<Matrix> filteredMatrix;
+       RCP<Matrix> filteredMatrix;
       BlockDiagonalize(currentLevel,*A,true,filteredMatrix);
       if(algo == "block diagonal") return;
-      else if(algo == "block diagonal distance laplacian") {
+      else if(algo == "block diagonal distance laplacian") {  
         // We now need to expand the coordinates by the interleaved blocksize
         LO blocksize = as<LO>(pL.get<int>("aggregation: block diagonal: interleaved blocksize"));
         RCP<RealValuedMultiVector> OldCoords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
-        LO dim = (LO) OldCoords->getNumVectors();
-        Coords = RealValuedMultiVectorFactory::Build(A->getRowMap(),dim);
-        for(LO k=0; k<dim; k++){
-          ArrayRCP<const real_type> old_vec = OldCoords->getData(k);
-          ArrayRCP<real_type>       new_vec = Coords->getDataNonConst(k);
-          for(LO i=0; i <(LO)OldCoords->getLocalLength(); i++) {   
-            LO new_base = i*dim;
-            for(LO j=0; j<blocksize; j++) 
-              new_vec[new_base + j] = old_vec[i];
+        if (OldCoords->getLocalLength() != A->getNodeNumRows()) {
+           LO dim = (LO) OldCoords->getNumVectors();
+           Coords = RealValuedMultiVectorFactory::Build(A->getRowMap(),dim);
+           for(LO k=0; k<dim; k++){
+             ArrayRCP<const real_type> old_vec = OldCoords->getData(k);
+             ArrayRCP<real_type>       new_vec = Coords->getDataNonConst(k);
+             for(LO i=0; i <(LO)OldCoords->getLocalLength(); i++) {   
+               LO new_base = i*dim;
+               for(LO j=0; j<blocksize; j++) 
+                new_vec[new_base + j] = old_vec[i];
+             }
           }
         }
+        else {
+          Coords = OldCoords;
+        }  
         algo = "distance laplacian";
       }
       else if(algo == "block diagonal classical") {
@@ -1473,12 +1490,27 @@ namespace MueLu {
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BlockDiagonalize(Level & currentLevel,const Matrix& A,bool generate_matrix, RCP<Matrix> & outMatrix) const {
     typedef Teuchos::ScalarTraits<SC> STS;
 
-    const ParameterList  & pL = GetParameterList();
-    LO blocksize = as<LO>(pL.get<int>("aggregation: block diagonal: interleaved blocksize"));
-    GetOStream(Statistics1) << "Using BlockDiagonal Graph (dropping connections between "<<blocksize<<" equations)"<<std::endl;
+  
 
+    const ParameterList  & pL = GetParameterList();
     const typename STS::magnitudeType dirichletThreshold = STS::magnitude(as<SC>(pL.get<double>("aggregation: Dirichlet threshold")));
-    
+
+    // Get the blocking information
+    std::cout<<"CMS: "<<this->description()<<"["<<this->GetID()<<"] Getting BlockNumber on level "<<currentLevel.GetLevelID()<<std::endl;
+    currentLevel.print(std::cout,Debug);  
+    rcp_dynamic_cast<const FactoryManager>(currentLevel.GetFactoryManager())->Print();
+    //    std::cout<<"CMS:  I expect to get it from "<<GetFactory("BlockNumber")->description()<<"["<<GetFactory("BlockNumber")->GetID()<<"]"<<std::endl;
+
+      RCP<LocalOrdinalVector>   BlockNumber = currentLevel.Get<RCP<LocalOrdinalVector> >("BlockNumber");
+    GetOStream(Statistics1) << "Using BlockDiagonal Graph (with provided blocking)"<<std::endl;      
+
+
+
+    // Accessors for block numbers
+    Teuchos::ArrayRCP<const LO> row_block_number = BlockNumber->getData(0);
+    // FIXME: We really should ghost this
+    Teuchos::ArrayRCP<const LO> col_block_number = BlockNumber->getData(0);
+
     // allocate space for the local graph
     ArrayRCP<size_t> rows_mat;   
     ArrayRCP<LO> rows_graph,columns;
@@ -1500,7 +1532,7 @@ namespace MueLu {
     LO realnnz = 0;
     GO numDropped = 0, numTotal = 0;
     for (LO row = 0; row < Teuchos::as<LO>(A.getRowMap()->getNodeNumElements()); ++row) {
-      LO row_block = row % blocksize;
+      LO row_block = row_block_number[row];
       size_t nnz = A.getNumEntriesInLocalRow(row);
       ArrayView<const LO> indices;
       ArrayView<const SC> vals;
@@ -1509,7 +1541,7 @@ namespace MueLu {
       LO rownnz = 0;
       for (LO colID = 0; colID < Teuchos::as<LO>(nnz); colID++) {
         LO col = indices[colID];
-        LO col_block = col % blocksize;
+        LO col_block = col_block_number[col];
         
         if(row_block == col_block) {
           if(generate_matrix) values[realnnz] = vals[colID];

@@ -71,6 +71,8 @@
 #include "MueLu_PreDropFunctionBaseClass_fwd.hpp"
 #include "MueLu_PreDropFunctionConstVal_fwd.hpp"
 
+#include "MueLu_FactoryManager_fwd.hpp"//DEBUG
+
 namespace MueLu {
 
   /*!

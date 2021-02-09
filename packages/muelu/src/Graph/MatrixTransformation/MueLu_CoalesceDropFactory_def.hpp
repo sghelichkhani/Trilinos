@@ -1501,7 +1501,7 @@ namespace MueLu {
     rcp_dynamic_cast<const FactoryManager>(currentLevel.GetFactoryManager())->Print();
     //    std::cout<<"CMS:  I expect to get it from "<<GetFactory("BlockNumber")->description()<<"["<<GetFactory("BlockNumber")->GetID()<<"]"<<std::endl;
 
-      RCP<LocalOrdinalVector>   BlockNumber = currentLevel.Get<RCP<LocalOrdinalVector> >("BlockNumber");
+    RCP<LocalOrdinalVector>   BlockNumber = Get<RCP<LocalOrdinalVector> >(currentLevel, "BlockNumber");
     GetOStream(Statistics1) << "Using BlockDiagonal Graph (with provided blocking)"<<std::endl;      
 
 

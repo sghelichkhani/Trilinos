@@ -254,7 +254,6 @@ namespace MueLu {
   template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
   void FactoryManager<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Print() const {
     std::map<std::string, RCP<const FactoryBase> >::const_iterator it;
-
     Teuchos::FancyOStream& fancy = GetOStream(Debug);
 
     fancy << "Users factory table (factoryTable_):" << std::endl;

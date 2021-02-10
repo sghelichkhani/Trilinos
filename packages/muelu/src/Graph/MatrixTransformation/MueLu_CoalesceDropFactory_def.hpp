@@ -171,9 +171,9 @@ namespace MueLu {
     if (predrop_ != Teuchos::null)
       GetOStream(Parameters0) << predrop_->description();
 
-    RCP<Matrix> A = Get< RCP<Matrix> >(currentLevel, "A");
+    RCP<Matrix> A;
+    RCP<Matrix> realA = Get< RCP<Matrix> >(currentLevel, "A");
     RCP<AmalgamationInfo> amalInfo = Get< RCP<AmalgamationInfo> >(currentLevel, "UnAmalgamationInfo");
-
     const ParameterList  & pL = GetParameterList();
     bool doExperimentalWrap = pL.get<bool>("lightweight wrap");
 
@@ -189,21 +189,21 @@ namespace MueLu {
     else if(algo == "block diagonal") {
       // Handle the "block diagonal" filtering and then leave
       RCP<Matrix> dummy;
-      BlockDiagonalize(currentLevel,*A,false,dummy);
+      BlockDiagonalize(currentLevel,*realA,false,dummy);
       return;
     }
     else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian")  {
       // Handle the "block diagonal" filtering, and then continue onward
-       RCP<Matrix> filteredMatrix;
-      BlockDiagonalize(currentLevel,*A,true,filteredMatrix);
+      RCP<Matrix> filteredMatrix;
+      BlockDiagonalize(currentLevel,*realA,true,filteredMatrix);
       if(algo == "block diagonal") return;
       else if(algo == "block diagonal distance laplacian") {  
         // We now need to expand the coordinates by the interleaved blocksize
         LO blocksize = as<LO>(pL.get<int>("aggregation: block diagonal: interleaved blocksize"));
         RCP<RealValuedMultiVector> OldCoords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
-        if (OldCoords->getLocalLength() != A->getNodeNumRows()) {
+        if (OldCoords->getLocalLength() != realA->getNodeNumRows()) {
            LO dim = (LO) OldCoords->getNumVectors();
-           Coords = RealValuedMultiVectorFactory::Build(A->getRowMap(),dim);
+           Coords = RealValuedMultiVectorFactory::Build(realA->getRowMap(),dim);
            for(LO k=0; k<dim; k++){
              ArrayRCP<const real_type> old_vec = OldCoords->getData(k);
              ArrayRCP<real_type>       new_vec = Coords->getDataNonConst(k);
@@ -224,6 +224,9 @@ namespace MueLu {
       }
       // Both cases
       A = filteredMatrix;
+    }
+    else {
+      A = realA;
     }
 
 
@@ -843,9 +846,9 @@ namespace MueLu {
             RCP<const Import> importer;
             {
               SubFactoryMonitor m1(*this, "Import construction", currentLevel);
-              if (blkSize == 1 && A->getCrsGraph()->getImporter() != Teuchos::null) {
+              if (blkSize == 1 &&  realA->getCrsGraph()->getImporter() != Teuchos::null) {
                 GetOStream(Warnings1) << "Using existing importer from matrix graph" << std::endl;
-                importer = A->getCrsGraph()->getImporter();
+                importer = realA->getCrsGraph()->getImporter();
               } else {
                 GetOStream(Warnings0) << "Constructing new importer instance" << std::endl;
                 importer = ImportFactory::Build(uniqueMap, nonUniqueMap);

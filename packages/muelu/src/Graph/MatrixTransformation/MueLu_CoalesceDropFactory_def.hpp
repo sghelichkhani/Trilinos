@@ -49,6 +49,7 @@
 #include <Xpetra_CrsGraphFactory.hpp>
 #include <Xpetra_CrsGraph.hpp>
 #include <Xpetra_ImportFactory.hpp>
+#include <Xpetra_ExportFactory.hpp>
 #include <Xpetra_MapFactory.hpp>
 #include <Xpetra_Map.hpp>
 #include <Xpetra_Matrix.hpp>
@@ -171,7 +172,6 @@ namespace MueLu {
     if (predrop_ != Teuchos::null)
       GetOStream(Parameters0) << predrop_->description();
 
-    RCP<Matrix> A;
     RCP<Matrix> realA = Get< RCP<Matrix> >(currentLevel, "A");
     RCP<AmalgamationInfo> amalInfo = Get< RCP<AmalgamationInfo> >(currentLevel, "UnAmalgamationInfo");
     const ParameterList  & pL = GetParameterList();
@@ -181,21 +181,21 @@ namespace MueLu {
     std::string algo = pL.get<std::string>("aggregation: drop scheme");
     
     RCP<RealValuedMultiVector> Coords;
-    
+
+    RCP<Matrix> A;    
     if(algo == "distance laplacian" ) { 
       // Grab the coordinates for distance laplacian
       Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
+      A = realA;
     }
     else if(algo == "block diagonal") {
       // Handle the "block diagonal" filtering and then leave
-      RCP<Matrix> dummy;
-      BlockDiagonalize(currentLevel,*realA,false,dummy);
+      BlockDiagonalize(currentLevel,realA,false);
       return;
     }
     else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian")  {
       // Handle the "block diagonal" filtering, and then continue onward
-      RCP<Matrix> filteredMatrix;
-      BlockDiagonalize(currentLevel,*realA,true,filteredMatrix);
+      RCP<Matrix> filteredMatrix = BlockDiagonalize(currentLevel,realA,true);
       if(algo == "block diagonal") return;
       else if(algo == "block diagonal distance laplacian") {  
         // We now need to expand the coordinates by the interleaved blocksize
@@ -271,7 +271,7 @@ namespace MueLu {
 # endif
 #endif
       ////////////////////////////////////////////////////
-
+ 
       enum decisionAlgoType {defaultAlgo, unscaled_cut, scaled_cut, scaled_cut_symmetric};
 
       decisionAlgoType distanceLaplacianAlgo = defaultAlgo;
@@ -1345,6 +1345,8 @@ namespace MueLu {
 
     } //if (doExperimentalWrap) ... else ...
 
+    std::cerr<<"CMS: Finishing Build()"<<std::endl;
+
   } //Build
 
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
@@ -1484,7 +1486,7 @@ namespace MueLu {
 
 
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
-  void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BlockDiagonalize(Level & currentLevel,const Matrix& A,bool generate_matrix, RCP<Matrix> & outMatrix) const {
+  Teuchos::RCP<Xpetra::Matrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> > CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BlockDiagonalize(Level & currentLevel,const RCP<Matrix>& A,bool generate_matrix) const {
     typedef Teuchos::ScalarTraits<SC> STS;
  
     const ParameterList  & pL = GetParameterList();
@@ -1495,7 +1497,7 @@ namespace MueLu {
     GetOStream(Statistics1) << "Using BlockDiagonal Graph (with provided blocking)"<<std::endl;      
 
     // Ghost the column block numbers if we need to
-    RCP<const Import> importer = A.getCrsGraph()->getImporter();
+    RCP<const Import> importer = A->getCrsGraph()->getImporter();
     if(!importer.is_null()) {
       SubFactoryMonitor m1(*this, "Block Number import", currentLevel);      
       ghostedBlockNumber= Xpetra::VectorFactory<LO,LO,GO,NO>::Build(importer->getTargetMap());
@@ -1514,27 +1516,25 @@ namespace MueLu {
     ArrayRCP<LO> rows_graph,columns;
     ArrayRCP<SC> values;
     RCP<CrsMatrixWrap> crs_matrix_wrap;
-    RCP<CrsMatrix> crs_matrix;
     
     if(generate_matrix) {
-      crs_matrix_wrap = rcp(new CrsMatrixWrap(A.getRowMap(), A.getColMap(), 0));
-      crs_matrix      = crs_matrix_wrap->getCrsMatrix();
-      crs_matrix->allocateAllValues(A.getNodeNumEntries(), rows_mat, columns, values);
+      crs_matrix_wrap = rcp(new CrsMatrixWrap(A->getRowMap(), A->getColMap(), 0));
+      crs_matrix_wrap->getCrsMatrix()->allocateAllValues(A->getNodeNumEntries(), rows_mat, columns, values);
     }
     else {
-      rows_graph.resize(A.getNodeNumRows()+1);
-      columns.resize(A.getNodeNumEntries());
-      values.resize(A.getNodeNumEntries());
+      rows_graph.resize(A->getNodeNumRows()+1);
+      columns.resize(A->getNodeNumEntries());
+      values.resize(A->getNodeNumEntries());
     }
       
     LO realnnz = 0;
     GO numDropped = 0, numTotal = 0;
-    for (LO row = 0; row < Teuchos::as<LO>(A.getRowMap()->getNodeNumElements()); ++row) {
+    for (LO row = 0; row < Teuchos::as<LO>(A->getRowMap()->getNodeNumElements()); ++row) {
       LO row_block = row_block_number[row];
-      size_t nnz = A.getNumEntriesInLocalRow(row);
+      size_t nnz = A->getNumEntriesInLocalRow(row);
       ArrayView<const LO> indices;
       ArrayView<const SC> vals;
-      A.getLocalRowView(row, indices, vals);
+      A->getLocalRowView(row, indices, vals);
 
       LO rownnz = 0;
       for (LO colID = 0; colID < Teuchos::as<LO>(nnz); colID++) {
@@ -1552,14 +1552,14 @@ namespace MueLu {
       else rows_graph[row+1] = realnnz;
     }
     
-    ArrayRCP<const bool> boundaryNodes = MueLu::Utilities<SC,LO,GO,NO>::DetectDirichletRows(A, dirichletThreshold);
+    ArrayRCP<const bool> boundaryNodes = MueLu::Utilities<SC,LO,GO,NO>::DetectDirichletRows(*A, dirichletThreshold);
         
     if(!generate_matrix) {
       // We can't resize an Arrayrcp and pass the checks for setAllValues
       values.resize(realnnz);
       columns.resize(realnnz);
     }
-    numTotal = A.getNodeNumEntries();
+    numTotal = A->getNodeNumEntries();
 
     if (GetVerbLevel() & Statistics1) {
       GO numLocalBoundaryNodes  = 0;
@@ -1567,7 +1567,7 @@ namespace MueLu {
       for (LO i = 0; i < boundaryNodes.size(); ++i)
         if (boundaryNodes[i])
           numLocalBoundaryNodes++;
-      RCP<const Teuchos::Comm<int> > comm = A.getRowMap()->getComm();
+      RCP<const Teuchos::Comm<int> > comm = A->getRowMap()->getComm();
       MueLu_sumAll(comm, numLocalBoundaryNodes, numGlobalBoundaryNodes);
       GetOStream(Statistics1) << "Detected " << numGlobalBoundaryNodes << " Dirichlet nodes" << std::endl;
 
@@ -1583,18 +1583,21 @@ namespace MueLu {
     Set(currentLevel, "Filtering", true);    
 
     if(generate_matrix) {
-      crs_matrix->setAllValues(rows_mat,columns,values);
-      crs_matrix->expertStaticFillComplete(A.getDomainMap(), A.getRangeMap(),A.getCrsGraph()->getImporter(),A.getCrsGraph()->getExporter());
-      outMatrix = crs_matrix_wrap;
+      crs_matrix_wrap->getCrsMatrix()->setAllValues(rows_mat,columns,values);      
+      // NOTE: This obvious thing does not work correctly with Epetra for reference counting reasons
+      crs_matrix_wrap->getCrsMatrix()->expertStaticFillComplete(A->getDomainMap(), A->getRangeMap(),A->getCrsGraph()->getImporter(),A->getCrsGraph()->getExporter());
+      //crs_matrix->expertStaticFillComplete(A->getDomainMap(), A->getRangeMap(),ImportFactory::Build(A->getCrsGraph()->getImporter()),ExportFactory::Build(A->getCrsGraph()->getExporter()));
+
     }
     else {
-      RCP<GraphBase> graph =  rcp(new LWGraph(rows_graph, columns, A.getRowMap(), A.getColMap(), "block-diagonalized graph of A"));
+      RCP<GraphBase> graph =  rcp(new LWGraph(rows_graph, columns, A->getRowMap(), A->getColMap(), "block-diagonalized graph of A"));
       graph->SetBoundaryNodeMap(boundaryNodes);
       Set(currentLevel, "Graph",       graph);
     }
 
 
     Set(currentLevel, "DofsPerNode", 1);
+    return crs_matrix_wrap;
   }
 
 } //namespace MueLu

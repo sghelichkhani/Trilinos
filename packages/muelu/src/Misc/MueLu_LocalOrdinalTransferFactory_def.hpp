@@ -74,9 +74,6 @@ namespace MueLu {
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
   void LocalOrdinalTransferFactory<LocalOrdinal, GlobalOrdinal, Node>::DeclareInput(Level& fineLevel, Level& coarseLevel) const {
     static bool isAvailableXfer = false;
-    //    std::cout<<"*** LocalOrdinalTransferFactory("<<TransferVecName_<<")["<<GetID()<<"] Before ***"<<std::endl;
-    //    fineLevel.print(std::cout,Debug);//CMS
-
     if (coarseLevel.GetRequestMode() == Level::REQUEST) {
       isAvailableXfer = coarseLevel.IsAvailable(TransferVecName_, this);
       if (isAvailableXfer == false) {
@@ -85,10 +82,6 @@ namespace MueLu {
         Input(fineLevel, "CoarseMap");
       }
     }
-
-    //    std::cout<<"*** LocalOrdinalTransferFactory("<<TransferVecName_<<")["<<GetID()<<"] After ***"<<std::endl;
-    //    fineLevel.print(std::cout,Debug);//CMS
-
 
   }
 
@@ -143,24 +136,25 @@ namespace MueLu {
    
     // Fill in coarse TV
     size_t error_count = 0;
-    for (LO lnode = 0; lnode < vertex2AggID.size(); lnode++) {
+    for (LO lnode = 0; lnode < vertex2AggID.size(); lnode++) {      
       if (procWinner[lnode] == myPID &&
-          lnode < vertex2AggID.size() &&
+          //lnode < vertex2AggID.size() &&
           lnode < fineData.size() && // TAW do not access off-processor data
           vertex2AggID[lnode] < coarseData.size()) {
         if(coarseData[vertex2AggID[lnode]] == LO_INVALID)
           coarseData[vertex2AggID[lnode]] = fineData[lnode];
-        else
+        if(coarseData[vertex2AggID[lnode]] != fineData[lnode])
           error_count++;        
       }
     }
+
+    // Error checking:  All nodes in an aggregate must share a local ordinal
     if(error_count > 0) {
       std::ostringstream ofs;
       ofs << "LocalOrdinalTransferFactory: ERROR:  Each aggregate must have a unique LO value.  We had "<<std::to_string(error_count)<<" unknowns that did not match.";
       throw std::runtime_error(ofs.str());
     }
-  
-    
+      
     Set<RCP<LocalOrdinalVector> >(coarseLevel, TransferVecName_, coarseTV);
 
   }

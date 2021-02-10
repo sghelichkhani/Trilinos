@@ -51,10 +51,8 @@
 #include "Xpetra_Matrix.hpp"
 #include "Xpetra_IO.hpp"
 
-
 #include "MueLu_InitialBlockNumberFactory_decl.hpp"
 
-#include "MueLu_LocalOrdinalTransferFactory.hpp"
 #include "MueLu_MasterList.hpp"
 #include "MueLu_Level.hpp"
 #include "MueLu_Monitor.hpp"
@@ -91,7 +89,6 @@ namespace MueLu {
     Teuchos::ArrayRCP<LO> bn_data = BlockNumber->getDataNonConst(0);
     for(LO i=0; i<(LO)A->getRowMap()->getNodeNumElements();i++)
       bn_data[i] = i % blocksize;
-    std::cout<<"CMS: "<<this->description()<<"["<<this->GetID()<<"] Setting BlockNumber on level "<<currentLevel.GetLevelID()<<std::endl;
     
     Set(currentLevel,"BlockNumber",BlockNumber);
   }

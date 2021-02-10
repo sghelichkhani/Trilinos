@@ -73,9 +73,6 @@
 #include "MueLu_PreDropFunctionConstVal.hpp"
 #include "MueLu_Utilities.hpp"
 
-
-#include "MueLu_FactoryManager.hpp"//DEBUG
-
 #include <algorithm>
 #include <cstdlib>
 #include <string>
@@ -155,8 +152,6 @@ namespace MueLu {
         Input(currentLevel, "Coordinates");    
       }
       else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian" || algo == "block diagonal")  {
-        std::cout<<"CMS: "<<this->description()<<"["<<this->GetID()<<"] Asking for BlockNumber on level "<<currentLevel.GetLevelID()<<std::endl;
-        currentLevel.print(std::cout,Debug);
         Input(currentLevel, "BlockNumber");
       }
     }     
@@ -187,7 +182,6 @@ namespace MueLu {
     
     RCP<RealValuedMultiVector> Coords;
     
-    GetOStream(Parameters0) << "CMS: drop scheme = "<<algo<<std::endl;
     if(algo == "distance laplacian" ) { 
       // Grab the coordinates for distance laplacian
       Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
@@ -1489,27 +1483,28 @@ namespace MueLu {
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BlockDiagonalize(Level & currentLevel,const Matrix& A,bool generate_matrix, RCP<Matrix> & outMatrix) const {
     typedef Teuchos::ScalarTraits<SC> STS;
-
-  
-
+ 
     const ParameterList  & pL = GetParameterList();
     const typename STS::magnitudeType dirichletThreshold = STS::magnitude(as<SC>(pL.get<double>("aggregation: Dirichlet threshold")));
 
-    // Get the blocking information
-    std::cout<<"CMS: "<<this->description()<<"["<<this->GetID()<<"] Getting BlockNumber on level "<<currentLevel.GetLevelID()<<std::endl;
-    currentLevel.print(std::cout,Debug);  
-    rcp_dynamic_cast<const FactoryManager>(currentLevel.GetFactoryManager())->Print();
-    //    std::cout<<"CMS:  I expect to get it from "<<GetFactory("BlockNumber")->description()<<"["<<GetFactory("BlockNumber")->GetID()<<"]"<<std::endl;
-
-    RCP<LocalOrdinalVector>   BlockNumber = Get<RCP<LocalOrdinalVector> >(currentLevel, "BlockNumber");
+    RCP<LocalOrdinalVector> BlockNumber = Get<RCP<LocalOrdinalVector> >(currentLevel, "BlockNumber");
+    RCP<LocalOrdinalVector> ghostedBlockNumber;
     GetOStream(Statistics1) << "Using BlockDiagonal Graph (with provided blocking)"<<std::endl;      
 
-
+    // Ghost the column block numbers if we need to
+    RCP<const Import> importer = A.getCrsGraph()->getImporter();
+    if(!importer.is_null()) {
+      SubFactoryMonitor m1(*this, "Block Number import", currentLevel);      
+      ghostedBlockNumber= Xpetra::VectorFactory<LO,LO,GO,NO>::Build(importer->getTargetMap());
+      ghostedBlockNumber->doImport(*BlockNumber, *importer, Xpetra::INSERT);
+    } 
+    else {
+      ghostedBlockNumber = BlockNumber;
+    }
 
     // Accessors for block numbers
     Teuchos::ArrayRCP<const LO> row_block_number = BlockNumber->getData(0);
-    // FIXME: We really should ghost this
-    Teuchos::ArrayRCP<const LO> col_block_number = BlockNumber->getData(0);
+    Teuchos::ArrayRCP<const LO> col_block_number = ghostedBlockNumber->getData(0);
 
     // allocate space for the local graph
     ArrayRCP<size_t> rows_mat;   

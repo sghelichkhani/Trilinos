@@ -64,6 +64,14 @@ struct SecantState {
   int storage;                                        // Storage Size
   int current;                                        // Current Storage Size
   int iter;                                           // Current Optimization Iteration
+
+  template<class Archive>
+  void serialize(Archive &archive) {
+    archive(iterate);
+    archive(iterDiff, gradDiff);
+    archive(product, product2);
+    archive(storage, current, iter);
+  }
 };
 
 template<class Real>
@@ -83,6 +91,11 @@ public:
     state_->storage = M;
     state_->current = -1;
     state_->iter    = 0;
+  }
+
+  template<class Archive>
+  void serialize(Archive &archive) {
+    archive(state_, isInitialized_);
   }
 
   ROL::Ptr<SecantState<Real> >& get_state() { return state_; }

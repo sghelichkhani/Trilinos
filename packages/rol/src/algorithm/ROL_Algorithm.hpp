@@ -129,6 +129,11 @@ public:
     printHeader_ = printHeader;
   }
 
+  template<class Archive>
+  void serialize(Archive &archive) {
+    archive(state_);
+  }
+
   /** \brief Run algorithm on unconstrained problems (Type-U).
              This is the primary Type-U interface.
   */

@@ -83,6 +83,10 @@ public:
     state_ = ROL::makePtr<StepState<Real>>();
   }
 
+  template<class Archive>
+  void serialize(Archive &archive) {
+    archive(state_);
+  }
 
   /** \brief Initialize step with bound constraint.
   */

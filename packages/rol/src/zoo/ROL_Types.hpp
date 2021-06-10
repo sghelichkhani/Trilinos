@@ -167,6 +167,14 @@ namespace ROL {
       iterateVec(ROL::nullPtr), lagmultVec(ROL::nullPtr), minIterVec(ROL::nullPtr),
       statusFlag(EXITSTATUS_LAST) {}
 
+    template<class Archive>
+    void serialize(Archive &archive) {
+      archive(iter, minIter, nfval, ncval, ngrad);
+      archive(value, minValue, gnorm, cnorm, snorm, aggregateGradientNorm, aggregateModelError);
+      archive(flag, statusFlag);
+      archive(iterateVec, lagmultVec, minIterVec);
+    }
+
     void reset(void) {
       iter                  = 0;
       minIter               = 0;
@@ -216,6 +224,13 @@ namespace ROL {
                       flag(0),
                       SPiter(0),
                       SPflag(0) {}
+
+    template<class Archive>
+    void serialize(Archive &archive) {
+      archive(gradientVec, descentVec, constraintVec);
+      archive(nfval, ngrad, searchSize);
+      archive(flag, SPiter, SPflag);
+    }
 
     void reset(const Real searchSizeInput = 1.0) {
       if (gradientVec != ROL::nullPtr) {
